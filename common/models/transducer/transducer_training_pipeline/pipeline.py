@@ -118,8 +118,15 @@ class TransducerFullSumAndFramewiseTrainingPipeline:
 
       self.start_epoch = epoch
 
-  def _get_net(self, epoch: int) -> Dict[str, Any]:
-    return self.stage.make_net(epoch)
+  def _get_net(self, epoch: int, decoder: str = "output") -> Dict[str, Any]:
+    net = self.stage.make_net(epoch)
+    decoder_unit = net[decoder]["unit"]
+    # Updating the label topology
+    decoder_unit["full_sum_loss"]["eval"] = self.stage.alignment_topology.loss
+    decoder_unit["full_sum_loss"]["out_type"] = self.stage.alignment_topology.loss_out_type
+    if self.stage.alignment_topology.name == "rna":
+      decoder_unit["t"]["from"] = ["dt", "du", "prev:t"]
+    return net
 
   def _get_net_with_align_dumping(self, epoch: int, ctx: Context) -> Dict[str, Any]:
     net = self._get_net(epoch)

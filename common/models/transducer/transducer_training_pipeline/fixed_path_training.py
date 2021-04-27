@@ -17,7 +17,7 @@ def update_net_for_fixed_path_training(net: Dict[str, Any],
                                        ) -> Dict[str, Any]:
   """
   Args:
-      net (Dict[str, Any]): [description]
+      net (Dict[str, Any]): transducer network which does FullSum training
       ctx (Context): context providing us with extra info.
       stage_num_align (int): Stage number from which we take the dumped alignments.
       align_dir (str): Path to the folder with the .hdf files.
@@ -26,25 +26,29 @@ def update_net_for_fixed_path_training(net: Dict[str, Any],
       inited_switchout_output (str): from this output_is_not_blank is calculated.
 
   Returns:
-      Dict[str, Any]: [updated network dictionary]
+      Dict[str, Any]: updated network dictionary
   """
   new_target_name = "targetb"
   target = ctx.target
   blank_idx = ctx.blank_idx
   train = ctx.train
+  search = ctx.search
   num_labels_wb = ctx.num_labels_wb
 
   subnet = net[decoder]["unit"]
-  subnet["target"] = new_target_name
+  net[decoder]["target"] = new_target_name
+
+  if not search:
+    del subnet["lm_input"]
+    subnet["lm_input"] = {"class": "prefix_in_time", "from": f"base:data:{new_target_name}", "prefix": 0}
 
   if train:
-    subnet["size_target"] = new_target_name
-    del subnet["lm_input"]
+    net[decoder]["size_target"] = new_target_name
     del subnet["full_sum_loss"]
     if switchout:  # Framewise training allows switchout
       subnet[inited_switchout_output] = {  # SwitchOut in training
         "class": "eval", "from": "output", "eval": switchout_target,
-        "eval_local": {"targetb_blank_idx": blank_idx, "target_num_labels": target.get_num_classes()},
+        "eval_locals": {"targetb_blank_idx": blank_idx, "target_num_labels": target.get_num_classes()},
         "initial_output": 0
       }
 
