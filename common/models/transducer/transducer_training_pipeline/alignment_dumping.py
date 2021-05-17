@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Any
 from .pipeline import Context, Topology
+from .debug_p import tf_debug_print  # -------------------------------
 
 
 def update_net_for_alignment_dumping(net: Dict[str, Any],
@@ -30,6 +31,7 @@ def update_net_for_alignment_dumping(net: Dict[str, Any],
       Dict[str, Any]: Updated network
   """
 
+  tf_debug_print({"START make_align"})  # -------------------------------
   target = ctx.target
 
   subnet = net[decoder]["unit"]

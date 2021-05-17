@@ -34,6 +34,7 @@ from ..topology import Topology
 from ..transducer_fullsum import Context
 from .alignment_dumping import update_net_for_alignment_dumping
 from .fixed_path_training import update_net_for_fixed_path_training
+from .debug_p import tf_debug_print_start_end, tf_debug_print  # ----------------------------------
 import os
 
 
@@ -113,9 +114,9 @@ class TransducerFullSumAndFramewiseTrainingPipeline:
   def _update(self, epoch: int):
     """Update model for the next stage if necessary"""
     if self.index < len(self.stage_list):  # only if we aren't already in the last stage
+      tf_debug_print({"update2": epoch})  # ----------------------------------
       self.index += 1
       self.stage = self.stage_list[self.index]
-
       self.start_epoch = epoch
 
   def _get_net(self, epoch: int, decoder: str = "output") -> Dict[str, Any]:
@@ -142,7 +143,6 @@ class TransducerFullSumAndFramewiseTrainingPipeline:
     net = self._get_net(epoch)
     net = update_net_for_fixed_path_training(net=net, ctx=ctx, align_dir=self.align_dir,
                                              stage_num_align=self.stage.stage_num_align)
-
     # Global changes
     # Reset
     if self.stage.reset:
@@ -150,14 +150,16 @@ class TransducerFullSumAndFramewiseTrainingPipeline:
 
     # TODO: Chunking  not working for RNNT
     if self.stage.chunking:
-      _time_red = 6
+      _time_red = 6  # has to be read from the network
       _chunk_size = 60
       net["#config"].update({
         # TODO: not configurable yet. How to provide the params to the stage?
-        "chunking":  # can use chunking with frame-wise training
+        # With RNNT we have the prolem that the num_frames of alignment is U+T isntead of T
+        # but chunking requires consistent lengths to chunk.
+        "chunking":  # can use chunking with frame-wise training (meant only for the "train" dataset)
         (
-          {"data": _chunk_size * _time_red, "alignment": _chunk_size},
-          {"data": _chunk_size * _time_red // 2, "alignment": _chunk_size // 2}
+          {"data": _chunk_size * _time_red, "alignment": _chunk_size},  # chunk_size
+          {"data": _chunk_size * _time_red // 2, "alignment": _chunk_size // 2}  # chunk_step
         )
       })
 
@@ -168,8 +170,10 @@ class TransducerFullSumAndFramewiseTrainingPipeline:
     Builds and updates the network according to the epoch we are in now.
     It adds alignment if required.
     """
-
-
+    tf_debug_print_start_end()  # -------------------------------
+    tf_debug_print({"epoch": epoch})  # -------------------------------
+    tf_debug_print({"Up to epoch": self._stage_end_epoch(), "index": self.index, "stage_epoch": self._stage_epoch(epoch)})  # -------------------------------
+    tf_debug_print_start_end()  # -------------------------------
     task = get_global_config().value("task", "train")
     target = TargetConfig.global_from_config()
     ctx = Context(task=task, target=target, beam_size=12)

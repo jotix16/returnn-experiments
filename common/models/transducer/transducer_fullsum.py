@@ -62,7 +62,7 @@ import sys
 from ..encoder import blstm_cnn_specaug
 from .. import lstm
 from .recomb_recog import targetb_recomb_recog
-from .loss import rnnt_loss, rnnt_loss_out_type
+from .topology import Topology, rna_topology, rnnt_topology, rnnt_topology_tf
 from ..collect_out_str import make_out_str_func
 from ...datasets.interface import TargetConfig
 
@@ -200,14 +200,26 @@ class DecoderLogProbSeparateWb(IDecoderLogProbSeparateWb):
     }
 
 
+def printttt(sources, **kwargs):
+  from returnn.tf.compat import v1 as tf
+  from returnn.tf.util.basic import py_print
+  top = sources(0, as_data=True, auto_convert=False).get_placeholder_as_batch_major()
+  top = py_print(top, [top], message="OMG PLEASE WORK: ", summarize=10)
+  print_op = tf.print({"HEYY PLEASE WORK: ": top}, summarize=-1)
+  with tf.control_dependencies([print_op]):
+    top = tf.identity(top)
+  return 0
+
+
 class Decoder(_IMaker):
-  def __init__(self, *,
+  def __init__(self, *, topology: Topology = rnnt_topology,
                slow_rnn: IDecoderSlowRnn = None,
                fast_rnn: IDecoderFastRnn = None,
                log_prob_separate_nb: IDecoderLogProbSeparateNb = None,
                log_prob_separate_wb: IDecoderLogProbSeparateWb = None,
                **kwargs):
     super().__init__(**kwargs)
+    self.topology = topology
     if not slow_rnn:
       slow_rnn = DecoderSlowRnnLstmIndependent(ctx=self.ctx)
     self.slow_rnn = slow_rnn
@@ -232,11 +244,14 @@ class Decoder(_IMaker):
       "am0": {"class": "gather_nd", "from": _base(encoder), "position": "prev:t"},  # [B,D]
       "am": {"class": "copy", "from": "am0" if search else "data:source"},
 
-      "prev_out_non_blank": {
-        "class": "reinterpret_data", "from": "prev:output_", "set_sparse_dim": target.get_num_classes()},
+      "prev_output_wo_b": {
+        "class": "masked_computation", "unit": {"class": "copy", "initial_output": 0},
+        "from": "prev:output_", "mask": "prev:output_emit", "initial_output": 0},
+      "prev_out_non_blank": {  # N_nb
+        "class": "reinterpret_data", "from": "prev_output_wo_b", "set_sparse_dim": target.get_num_classes()},
 
-      "slow_rnn": self.slow_rnn.make(
-        prev_sparse_label_nb="prev_out_non_blank",
+      "slow_rnn": self.slow_rnn.make(  # N_nb
+        prev_sparse_label_nb="prev_out_non_blank",  # will be embeded before being used should be N_nb
         prev_emit="prev:output_emit",
         unmasked_sparse_label_nb_seq=None if search else "lm_input",  # might enable optimization if used
         prev_fast_rnn="prev:fast_rnn",
@@ -247,12 +262,12 @@ class Decoder(_IMaker):
         slow_rnn="slow_rnn",
         encoder="am"),
 
-      "output_log_prob_nb": self.log_prob_separate_nb.make(fast_rnn="fast_rnn"),
-      "output_log_prob_wb": self.log_prob_separate_wb.make(fast_rnn="fast_rnn", log_prob_nb="output_log_prob_nb"),
+      "output_log_prob_nb": self.log_prob_separate_nb.make(fast_rnn="fast_rnn"),  # N_nb
+      "output_log_prob_wb": self.log_prob_separate_wb.make(fast_rnn="fast_rnn", log_prob_nb="output_log_prob_nb"),  # N_wb
 
       "output": {
         "class": 'choice',
-        'target': target.key,  # note: wrong! but this is ignored both in full-sum training and in search
+        'target': f"{target.key}0" if train else None,  # note: wrong! but this is ignored both in full-sum training and in search
         'beam_size': beam_size,
         'from': "output_log_prob_wb", "input_type": "log_prob",
         "initial_output": 0,
@@ -274,32 +289,17 @@ class Decoder(_IMaker):
 
       # initial state=True so that we are consistent to the training and the initial state is correctly set.
       "output_emit": {"class": "copy", "from": "output_is_not_blank", "is_output_layer": True, "initial_output": True},
-
-      "const0": {"class": "constant", "value": 0, "collocate_with": ["du", "dt", "t", "u"], "dtype": "int32"},
-      "const1": {"class": "constant", "value": 1, "collocate_with": ["du", "dt", "t", "u"], "dtype": "int32"},
-
-      # pos in target, [B]
-      "du": {"class": "switch", "condition": "output_emit", "true_from": "const1", "false_from": "const0"},
-      "u": {"class": "combine", "from": ["prev:u", "du"], "kind": "add", "initial_output": 0},
-
-      # pos in input, [B]
-      # output label: stay in t, otherwise advance t (encoder)
-      "dt": {"class": "switch", "condition": "output_is_not_blank", "true_from": "const0", "false_from": "const1"},
-      "t": {"class": "combine", "from": ["dt", "prev:t"], "kind": "add", "initial_output": 0},
-
-      # stop at U+T
-      # in recog: stop when all input has been consumed
-      # in train: defined by target.
-      "enc_seq_len": {"class": "length", "from": f"base:{encoder}", "sparse": False},
-      "end": {"class": "compare", "from": ["t", "enc_seq_len"], "kind": "greater"},
     }
+    # update dict with "t" and "u" entries for the position in the input and target sequence
+    # it adds an "end" entry if the topology is not time-synchronous
+    rec_decoder.update(self.topology.make("output_emit", f"base:{encoder}"))
 
     if train:
       rec_decoder["full_sum_loss"] = {
         "class": "eval",
         "from": ["output_log_prob_wb", f"base:data:{target.key}", f"base:{encoder}"],
-        "eval": rnnt_loss,
-        "out_type": rnnt_loss_out_type,
+        "eval": self.topology.loss,
+        "out_type": self.topology.loss_out_type,
         "loss": "as_is",
       }
 
@@ -346,6 +346,9 @@ class Net:
 
   def make_net(self) -> Dict[str, Any]:
     net = {
+      "target_with_blank": {"class": "reinterpret_data", "from": f"data:{self.ctx.target.key}",
+                            "increase_sparse_dim": 1, "register_as_extern_data": "classes0"},
+
       "encoder": self.encoder.make("data"),
       "output": self.decoder.make("encoder"),
 
@@ -407,6 +410,7 @@ def _make_decoder(
   meaning that we all vertical transitions in the lattice, i.e. U=T+S. (T input, S output, U alignment length).
   """
   return Decoder(
+    topology=rna_topology,
     ctx=ctx,
     slow_rnn=DecoderSlowRnnLstmIndependent(
       ctx=ctx, lstm_dim=lm_lstm_dim, embed_dim=lm_embed_dim, embed_dropout=lm_dropout),

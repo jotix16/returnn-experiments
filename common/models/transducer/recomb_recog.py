@@ -1,5 +1,11 @@
 
 def get_filtered_score_op(verbose=False):
+  """
+  For each sequence in the batch we the beam with the highest score is found.
+  Then, one calculates the sum of normalized scores(with highest score) and takes log of it log(sum_scores_normalized)
+  Then, we make up for the normalization by adding the log of highest score log(sum_scores_normalized)+ log(highest_score)
+  Finally, the beam with the highest score gets the log(sum_scores) whereas all other beams get score -inf.
+  """
   cpp_code = """
     #include "tensorflow/core/framework/op.h"
     #include "tensorflow/core/framework/op_kernel.h"
@@ -116,7 +122,7 @@ def targetb_recomb_recog(layer, batch_dim, scores_in, scores_base, base_beam_in,
   :return: (batch,base_beam_in,dim), combined scores
   """
   from returnn.tf.compat import v1 as tf
-
+  from returnn.tf.util.basic import py_print
   out_str = layer.explicit_search_sources[0].output  # [B*beam], str
   out_str_t = tf.reshape(out_str.placeholder, (batch_dim, -1))[:, :base_beam_in]
 
@@ -126,4 +132,6 @@ def targetb_recomb_recog(layer, batch_dim, scores_in, scores_base, base_beam_in,
     (batch_dim, base_beam_in, 1))
 
   scores = scores_in + scores_base  # (batch,beam,dim)
+
+  scores = py_print(scores, [batch_dim, base_beam_in, scores], message=f"HHHHHHHH: {scores.shape} ", summarize=10)
   return scores
