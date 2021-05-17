@@ -37,7 +37,7 @@ class Topology:
     self.alignment = alignment
     self.alignment_out_type = alignment_out_type
 
-  def make(self, output_emit: str, encoder: str) -> Dict[str, Any]:
+  def make(self, output_emit: str) -> Dict[str, Any]:
     """
       Args:
           output_emit (str): layer providing True if a non blank label is emited
@@ -53,32 +53,27 @@ class Topology:
       # pos in input, [B]
       "t": {"class": "combine", "from": ["dt", "prev:t"], "kind": "add", "initial_output": 0},
     }
-    top_dict.update(self._make(output_emit=output_emit, encoder=encoder))
+    top_dict.update(self._make(output_emit=output_emit))
     return top_dict
 
-  def _make(self, output_emit: str, encoder: str) -> Dict[str, Any]:
+  def _make(self, output_emit: str) -> Dict[str, Any]:
     raise NotImplementedError
 
 
 class RnaTopology(Topology):
-  def _make(self, output_emit: str, encoder: str) -> Dict[str, Any]:
+  def _make(self, output_emit: str) -> Dict[str, Any]:
     return {
       "du": {"class": "switch", "condition": output_emit, "true_from": "const1", "false_from": "const0"},
-      "dt": {"class": "switch", "condition": output_emit, "true_from": "const1", "false_from": "const0"}
-      # no "end" required as it is time synchronous
+      "dt": {"class": "switch", "condition": output_emit, "true_from": "const1", "false_from": "const1"},
     }
 
 
 class RnntTopology(Topology):
-  def _make(self, output_emit: str, encoder: str) -> Dict[str, Any]:
+  def _make(self, output_emit: str) -> Dict[str, Any]:
     return {
+      # stop at U+T
       "du": {"class": "switch", "condition": output_emit, "true_from": "const1", "false_from": "const0"},
       "dt": {"class": "switch", "condition": output_emit, "true_from": "const0", "false_from": "const1"},
-      # stop at U+T
-      # in recog: stop when all input has been consumed
-      # in train: defined by target.
-      "enc_seq_len": {"class": "length", "from": encoder, "sparse": False},
-      "end": {"class": "compare", "from": ["t", "enc_seq_len"], "kind": "equal"}
     }
 
 

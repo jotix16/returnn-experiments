@@ -289,10 +289,15 @@ class Decoder(_IMaker):
 
       # initial state=True so that we are consistent to the training and the initial state is correctly set.
       "output_emit": {"class": "copy", "from": "output_is_not_blank", "is_output_layer": True, "initial_output": True},
+
+      "enc_seq_len": {"class": "length", "from": f"base:{encoder}", "sparse": False},
+      # in recog: stop when all input has been consumed
+      # in train: defined by target.
+      "end": {"class": "compare", "from": ["t", "enc_seq_len"], "kind": "equal"}
     }
     # update dict with "t" and "u" entries for the position in the input and target sequence
     # it adds an "end" entry if the topology is not time-synchronous
-    rec_decoder.update(self.topology.make("output_emit", f"base:{encoder}"))
+    rec_decoder.update(self.topology.make("output_emit"))
 
     if train:
       rec_decoder["full_sum_loss"] = {
@@ -396,6 +401,7 @@ def make_net(
 
 def _make_decoder(
     *,
+    topology: Topology = rna_topology,
     ctx: Context,
     lm_embed_dim=256,
     lm_dropout=0.2,
@@ -410,7 +416,7 @@ def _make_decoder(
   meaning that we all vertical transitions in the lattice, i.e. U=T+S. (T input, S output, U alignment length).
   """
   return Decoder(
-    topology=rna_topology,
+    topology=topology,
     ctx=ctx,
     slow_rnn=DecoderSlowRnnLstmIndependent(
       ctx=ctx, lstm_dim=lm_lstm_dim, embed_dim=lm_embed_dim, embed_dropout=lm_dropout),
