@@ -296,7 +296,6 @@ class Decoder(_IMaker):
       "end": {"class": "compare", "from": ["t", "enc_seq_len"], "kind": "equal"}
     }
     # update dict with "t" and "u" entries for the position in the input and target sequence
-    # it adds an "end" entry if the topology is not time-synchronous
     rec_decoder.update(self.topology.make("output_emit"))
 
     if train:
